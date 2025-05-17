@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "kf-wxtrans"
+version = "0.1.0"
+description = ""
+authors = ["Andreas Domberg <andom@posteo.de>"]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+fastapi = "^0.115.12"
+whisperx = "^3.3.4"
+python-dotenv = "^1.1.0"
+uvicorn = "^0.34.2"
+python-multipart = "^0.0.20"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
