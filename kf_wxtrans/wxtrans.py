@@ -3,10 +3,13 @@ import json
 import uuid
 import subprocess
 from pathlib import Path
-from dotenv import load_dotenv, find_dotenv
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+import uvicorn
+from loguru import logger
+from dotenv import load_dotenv, find_dotenv
 from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, UploadFile, HTTPException
+
 
 load_dotenv(find_dotenv())
 
@@ -36,8 +39,8 @@ async def transcribe(file: UploadFile = File(...)):
 
     # Run WhisperX on the saved file
     try:
-        # transcription = run_whisperx(file_path)
-        transcription = run_dummy(file_path)  # Use dummy function for testing
+        transcription = run_whisperx(file_path)
+        # transcription = run_dummy(file_path)  # Use dummy function for testing
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"WhisperX transcription failed: {str(e)}")
     finally:
@@ -50,132 +53,57 @@ async def transcribe(file: UploadFile = File(...)):
 
 def run_whisperx(audio_path: Path) -> dict:
     """
-    Run WhisperX on the given audio file and return the transcription result.
+    Run WhisperX as a command-line process on the given audio file and return the transcription result.
     """
-    # Example command to run WhisperX
+    logger.debug(f"Running WhisperX on {audio_path}")
 
-    command_cpu = [
+    # Define the output directory for WhisperX
+    output_dir = audio_path.parent / "whisperx_output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Construct the WhisperX command
+    command = [
         "whisperx",
         str(audio_path),
-        "--batch_size 4",
-        "--compute_type int8",
+        "--output_dir", str(output_dir),
+        "--output_format", "json",
+        "--hf_token", os.getenv("HFTOKEN", ""),
+        "--batch_size", "4",
+        "--compute_type", "int8",
         "--diarize",
-        "--align_model WAV2VEC2_ASR_LARGE_LV60K_960H",
-        f"--hf_token {HFTOKEN}",
-        "--output_format json",
-        "--min_speakers 3",
-        "--threads 8"
+        "--align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H",
+        "--threads", "8"
     ]
 
-    # Run the command and capture the output
-    result = subprocess.run(command_cpu, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"WhisperX failed: {result.stderr}")
-
-    # Parse the JSON output from WhisperX
+    # Run the command
     try:
-        json_file = Path.cwd() / audio_path.name.replace(".mp3", ".json")
-        print(json_file)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        logger.debug(f"WhisperX command output: {result.stdout}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"WhisperX failed with error: {e.stderr}")
+        raise RuntimeError(f"WhisperX transcription failed: {e.stderr}")
 
+    # Locate the JSON output file
+    json_file = output_dir / f"{audio_path.stem}.json"
+    if not json_file:
+        raise RuntimeError(f"JSON output file {json_file} found in the WhisperX output directory")
+
+    logger.debug(f"WhisperX output JSON file: {json_file}")
+
+    # Read and parse the JSON file
+    try:
         with open(json_file, "r") as f:
-            return json.load(f)
-
+            transcription_result = json.load(f)
     except Exception as e:
-        raise RuntimeError(f"Failed to parse WhisperX output: {str(e)}")
+        raise RuntimeError(f"Failed to parse WhisperX output JSON file: {str(e)}")
 
-
-def run_dummy(audio_path: Path) -> dict:
-    """
-    Dummy function to simulate transcription.
-    """
-    return {
-        "task": "transcribe",
-        "language": "en",
-        "duration": 2.24,
-        "segments": [
-            {
-                "id": 0,
-                "text": "Andy in Kansas, you're on the air. Thanks for holding.",
-                "start": 0.5,
-                "end": 2.24,
-                "avg_logprob": -0.10296630859375,
-                "language": "en",
-                "speaker": "SPEAKER_03",
-                "words": [
-                    {
-                        "word": "Andy",
-                        "start": 0.5,
-                        "end": 0.5,
-                        "score": 0,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "in",
-                        "start": 0.5,
-                        "end": 0.68,
-                        "score": 0.08,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "Kansas,",
-                        "start": 0.68,
-                        "end": 1.14,
-                        "score": 0.32,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "you're",
-                        "start": 1.14,
-                        "end": 1.28,
-                        "score": 0.76,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "on",
-                        "start": 1.28,
-                        "end": 1.36,
-                        "score": 0.9,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "the",
-                        "start": 1.36,
-                        "end": 1.44,
-                        "score": 0.92,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "air.",
-                        "start": 1.44,
-                        "end": 1.72,
-                        "score": 0.33,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "Thanks",
-                        "start": 1.72,
-                        "end": 1.72,
-                        "score": 0.29,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "for",
-                        "start": 1.72,
-                        "end": 1.82,
-                        "score": 0.86,
-                        "speaker": "SPEAKER_03"
-                    },
-                    {
-                        "word": "holding.",
-                        "start": 1.82,
-                        "end": 2.24,
-                        "score": 0.54,
-                        "speaker": "SPEAKER_03"
-                    }
-                ]
-            }
-        ]
-    }
+    logger.info(f"WhisperX transcription completed for {audio_path}")
+    return transcription_result
 
 
 @app.get("/")
@@ -187,5 +115,4 @@ def root():
 
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run("wxtrans:app", host="127.0.0.1", port=8001)
