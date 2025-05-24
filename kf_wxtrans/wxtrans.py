@@ -8,12 +8,13 @@ import uvicorn
 from loguru import logger
 from dotenv import load_dotenv, find_dotenv
 from fastapi.responses import JSONResponse
-from fastapi import FastAPI, File, UploadFile, HTTPException
-
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request, Depends
+from assets import dummy_result
 
 load_dotenv(find_dotenv())
 
-HFTOKEN = os.getenv("HFTOKEN")
+HF_TOKEN = os.getenv("HFTOKEN")
+API_TOKEN = os.getenv("API_TOKEN")
 
 # Create the FastAPI app
 app = FastAPI()
@@ -22,8 +23,26 @@ app = FastAPI()
 UPLOAD_DIR = Path("/tmp/audio_files")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Store job statuses and results (for demo; use a DB or persistent store in production)
+JOBS = {}
+
+
+def check_api_token(request: Request):
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    token = auth.split(" ")[1]
+    if token != API_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid API token")
+
+
 @app.post("/transcribe")
-async def transcribe(file: UploadFile = File(...)):
+async def transcribe(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    _: None = Depends(check_api_token),
+):
     """
     Endpoint to handle audio file uploads and transcribe them using WhisperX.
     """
@@ -31,27 +50,66 @@ async def transcribe(file: UploadFile = File(...)):
     file_id = str(uuid.uuid4())  # Generate a unique ID for the file
     file_path = UPLOAD_DIR / f"{file_id}_{file.filename}"
 
-    try:
-        with open(file_path, "wb") as f:
-            f.write(await file.read())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
 
-    # Run WhisperX on the saved file
+    JOBS[file_id] = {"status": "processing", "result": None}
+    background_tasks.add_task(process_transcription, file_id, file_path)
+    return {"job_id": file_id}
+
+
+def process_transcription(job_id, file_path, threads: int = 14):
     try:
-        transcription = run_whisperx(file_path)
-        # transcription = run_dummy(file_path)  # Use dummy function for testing
+        result = run_whisperx(file_path, threads=threads)
+        # result = run_dummy(file_path)
+        JOBS[job_id] = {"status": "done", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"WhisperX transcription failed: {str(e)}")
+        JOBS[job_id] = {"status": "failed", "error": str(e)}
     finally:
-        # Clean up the uploaded file after processing
         file_path.unlink(missing_ok=True)
 
-    # Return the transcription result
-    return JSONResponse(content=transcription)
+
+@app.get("/transcribe/status/{job_id}")
+def get_status(
+    job_id: str,
+    request: Request = None,
+    _: None = Depends(check_api_token),
+):
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"status": job["status"]}
 
 
-def run_whisperx(audio_path: Path) -> dict:
+@app.get("/transcribe/result/{job_id}")
+def get_result(
+    job_id: str,
+    request: Request = None,
+    _: None = Depends(check_api_token),
+):
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "done":
+        raise HTTPException(status_code=202, detail="Transcription not finished")
+
+    return JSONResponse(content=job["result"])
+
+
+def run_dummy(audio_path: Path) -> dict:
+    """
+    Dummy function to simulate transcription. Replace with actual WhisperX call.
+    """
+    logger.debug(f"Running dummy transcription on {audio_path}")
+
+    # Simulate some processing
+    result = dummy_result
+
+    logger.info(f"Dummy transcription completed for {audio_path}")
+    return result
+
+
+def run_whisperx(audio_path: Path, threads: int = 8) -> dict:
     """
     Run WhisperX as a command-line process on the given audio file and return the transcription result.
     """
@@ -70,19 +128,15 @@ def run_whisperx(audio_path: Path) -> dict:
         "--hf_token", os.getenv("HFTOKEN", ""),
         "--batch_size", "4",
         "--compute_type", "int8",
+        "--model", "large-v2",
         "--diarize",
         "--align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H",
-        "--threads", "8"
+        "--threads", f"{threads}",
     ]
 
     # Run the command
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
         logger.debug(f"WhisperX command output: {result.stdout}")
     except subprocess.CalledProcessError as e:
         logger.error(f"WhisperX failed with error: {e.stderr}")
@@ -91,7 +145,9 @@ def run_whisperx(audio_path: Path) -> dict:
     # Locate the JSON output file
     json_file = output_dir / f"{audio_path.stem}.json"
     if not json_file:
-        raise RuntimeError(f"JSON output file {json_file} found in the WhisperX output directory")
+        raise RuntimeError(
+            f"JSON output file {json_file} found in the WhisperX output directory"
+        )
 
     logger.debug(f"WhisperX output JSON file: {json_file}")
 
@@ -102,7 +158,20 @@ def run_whisperx(audio_path: Path) -> dict:
     except Exception as e:
         raise RuntimeError(f"Failed to parse WhisperX output JSON file: {str(e)}")
 
+    # Clean up the result:
+    transcription_result = fix_missing_speakers(transcription_result)
+    if "word_segments" in transcription_result:
+        del transcription_result["word_segments"]
+
     logger.info(f"WhisperX transcription completed for {audio_path}")
+    return transcription_result
+
+
+def fix_missing_speakers(transcription_result: dict) -> dict:
+    for i, segment in enumerate(transcription_result["segments"]):
+        if "speaker" not in segment:
+            transcription_result["segments"][i] = "UNKNOWN"
+
     return transcription_result
 
 
