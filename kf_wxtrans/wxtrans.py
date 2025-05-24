@@ -58,15 +58,33 @@ async def transcribe(
     return {"job_id": file_id}
 
 
-def process_transcription(job_id, file_path, threads: int = 14):
+@app.post("/dummytranscribe")
+async def dummytranscribe(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    _: None = Depends(check_api_token),
+):
+    """
+    Endpoint to handle dummy transcription requests.
+    """
+    JOBS["dummyjob"] = {"status": "processing", "result": None}
+    background_tasks.add_task(process_dummy)
+    return {"job_id": "dummyjob"}
+
+
+def process_transcription(job_id, file_path, threads: int = 8):
     try:
         result = run_whisperx(file_path, threads=threads)
-        # result = run_dummy(file_path)
         JOBS[job_id] = {"status": "done", "result": result}
     except Exception as e:
         JOBS[job_id] = {"status": "failed", "error": str(e)}
     finally:
         file_path.unlink(missing_ok=True)
+
+
+def process_dummy(d):
+    JOBS["dummyjob"] = {"status": "done", "result": dummy_result}
 
 
 @app.get("/transcribe/status/{job_id}")
