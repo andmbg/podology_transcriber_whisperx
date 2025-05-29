@@ -1,6 +1,8 @@
 import os
 import json
+import time
 import uuid
+import secrets
 import subprocess
 from pathlib import Path
 
@@ -8,7 +10,15 @@ import uvicorn
 from loguru import logger
 from dotenv import load_dotenv, find_dotenv
 from fastapi.responses import JSONResponse
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request, Depends
+from fastapi import (
+    FastAPI,
+    File,
+    UploadFile,
+    HTTPException,
+    BackgroundTasks,
+    Request,
+    Depends,
+)
 from assets import dummy_result
 
 load_dotenv(find_dotenv())
@@ -25,6 +35,11 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Store job statuses and results (for demo; use a DB or persistent store in production)
 JOBS = {}
+
+
+def generate_job_id(length=8):
+    # Generates a random 8-character hex string
+    return f"jid_{secrets.token_hex(length // 2)}"
 
 
 def check_api_token(request: Request):
@@ -47,30 +62,15 @@ async def transcribe(
     Endpoint to handle audio file uploads and transcribe them using WhisperX.
     """
     # Save the uploaded file to the temporary directory
-    file_id = str(uuid.uuid4())  # Generate a unique ID for the file
-    file_path = UPLOAD_DIR / f"{file_id}_{file.filename}"
+    jid = str(uuid.uuid4())  # Generate a unique ID for the file
+    file_path = UPLOAD_DIR / f"{jid}_{file.filename}"
 
     with open(file_path, "wb") as f:
         f.write(await file.read())
 
-    JOBS[file_id] = {"status": "processing", "result": None}
-    background_tasks.add_task(process_transcription, file_id, file_path)
-    return {"job_id": file_id}
-
-
-@app.post("/dummytranscribe")
-async def dummytranscribe(
-    file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None,
-    request: Request = None,
-    _: None = Depends(check_api_token),
-):
-    """
-    Endpoint to handle dummy transcription requests.
-    """
-    JOBS["dummyjob"] = {"status": "processing", "result": None}
-    background_tasks.add_task(process_dummy)
-    return {"job_id": "dummyjob"}
+    JOBS[jid] = {"status": "processing", "result": None}
+    background_tasks.add_task(process_transcription, job_id=jid, file_path=file_path)
+    return {"job_id": jid}
 
 
 def process_transcription(job_id, file_path, threads: int = 8):
@@ -83,8 +83,27 @@ def process_transcription(job_id, file_path, threads: int = 8):
         file_path.unlink(missing_ok=True)
 
 
-def process_dummy(d):
-    JOBS["dummyjob"] = {"status": "done", "result": dummy_result}
+@app.post("/dummytranscribe")
+async def dummytranscribe(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    _: None = Depends(check_api_token),
+):
+    """
+    Endpoint to handle dummy transcription requests.
+    """
+    jid = generate_job_id()
+    JOBS[jid] = {"status": "processing", "result": None}
+    logger.debug(f"{jid}: Received a dummy transcription request")
+    background_tasks.add_task(process_dummy, job_id=jid)
+    return {"job_id": jid}
+
+
+def process_dummy(job_id):
+    time.sleep(5)
+    logger.debug("Slept 10s")
+    JOBS[job_id] = {"status": "done", "result": dummy_result}
 
 
 @app.get("/transcribe/status/{job_id}")
@@ -93,6 +112,7 @@ def get_status(
     request: Request = None,
     _: None = Depends(check_api_token),
 ):
+    logger.debug(f"Checking status for job {job_id}")
     job = JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -111,23 +131,11 @@ def get_result(
     if job["status"] != "done":
         raise HTTPException(status_code=202, detail="Transcription not finished")
 
+    logger.debug("Sending out transcription result")
     return JSONResponse(content=job["result"])
 
 
-def run_dummy(audio_path: Path) -> dict:
-    """
-    Dummy function to simulate transcription. Replace with actual WhisperX call.
-    """
-    logger.debug(f"Running dummy transcription on {audio_path}")
-
-    # Simulate some processing
-    result = dummy_result
-
-    logger.info(f"Dummy transcription completed for {audio_path}")
-    return result
-
-
-def run_whisperx(audio_path: Path, threads: int = 8) -> dict:
+def run_whisperx(audio_path: Path, threads: int) -> dict:
     """
     Run WhisperX as a command-line process on the given audio file and return the transcription result.
     """
@@ -138,9 +146,9 @@ def run_whisperx(audio_path: Path, threads: int = 8) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Construct the WhisperX command
+    # fmt: off
     command = [
-        "whisperx",
-        str(audio_path),
+        "whisperx", str(audio_path),
         "--output_dir", str(output_dir),
         "--output_format", "json",
         "--hf_token", os.getenv("HFTOKEN", ""),
@@ -151,6 +159,7 @@ def run_whisperx(audio_path: Path, threads: int = 8) -> dict:
         "--align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H",
         "--threads", f"{threads}",
     ]
+    # fmt: on
 
     # Run the command
     try:
