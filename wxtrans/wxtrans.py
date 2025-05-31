@@ -156,7 +156,7 @@ def run_whisperx(audio_path: Path, threads: int) -> dict:
         "whisperx", str(audio_path),
         "--output_dir", str(output_dir),
         "--output_format", "json",
-        "--hf_token", os.getenv("HFTOKEN", ""),
+        "--hf_token", HF_TOKEN,
         "--batch_size", "4",
         "--compute_type", "int8",
         "--model", "large-v2",
