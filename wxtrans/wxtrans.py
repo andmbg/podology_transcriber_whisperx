@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import uuid
@@ -20,6 +21,9 @@ from fastapi import (
     Depends,
 )
 from wxtrans.assets import dummy_result
+
+logger.remove()
+logger.add(sys.stderr, level="DEBUG")
 
 load_dotenv(find_dotenv())
 
