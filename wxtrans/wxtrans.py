@@ -49,6 +49,7 @@ def generate_job_id(length=8):
 
 
 def check_api_token(request: Request):
+    logger.info("Checking API token for request")
     auth = request.headers.get("Authorization")
     if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
