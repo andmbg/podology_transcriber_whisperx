@@ -27,7 +27,7 @@ logger.add(sys.stderr, level="DEBUG")
 
 load_dotenv(find_dotenv())
 
-HF_TOKEN = os.getenv("HFTOKEN")
+HF_TOKEN = os.getenv("HF_TOKEN")
 API_TOKEN = os.getenv("API_TOKEN")
 
 # Create the FastAPI app
