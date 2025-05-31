@@ -47,6 +47,8 @@ def check_api_token(request: Request):
     if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     token = auth.split(" ")[1]
+    logger.debug(f"Received token: {token}")
+    logger.debug(f"Configured API token: {API_TOKEN}")
     if token != API_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid API token")
 
@@ -211,4 +213,4 @@ def root():
 
 
 if __name__ == "__main__":
-    uvicorn.run("wxtrans:app", host="127.0.0.1", port=8001)
+    uvicorn.run("wxtrans:app", host="0.0.0.0", port=8001)
