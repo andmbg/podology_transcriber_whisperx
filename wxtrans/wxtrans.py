@@ -36,6 +36,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # Store job statuses and results (for demo; use a DB or persistent store in production)
 JOBS = {}
 
+print(API_TOKEN)
+
 
 def generate_job_id(length=8):
     # Generates a random 8-character hex string
@@ -47,8 +49,6 @@ def check_api_token(request: Request):
     if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     token = auth.split(" ")[1]
-    logger.debug(f"Received token: {token}")
-    logger.debug(f"Configured API token: {API_TOKEN}")
     if token != API_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid API token")
 
