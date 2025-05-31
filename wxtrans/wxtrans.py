@@ -19,7 +19,7 @@ from fastapi import (
     Request,
     Depends,
 )
-from assets import dummy_result
+from wxtrans.assets import dummy_result
 
 load_dotenv(find_dotenv())
 
