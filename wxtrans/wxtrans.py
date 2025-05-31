@@ -40,8 +40,6 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # Store job statuses and results (for demo; use a DB or persistent store in production)
 JOBS = {}
 
-with open("token", "w") as f:
-    f.write(API_TOKEN)
 
 def generate_job_id(length=8):
     # Generates a random 8-character hex string

@@ -4,6 +4,7 @@ FROM python:3.12-slim
 WORKDIR /wxtrans
 
 COPY pyproject.toml poetry.lock ./
+COPY .env .env
 RUN pip install poetry && poetry install --no-root
 
 COPY wxtrans ./wxtrans
