@@ -5,6 +5,13 @@ WORKDIR /wxtrans
 
 COPY pyproject.toml poetry.lock ./
 COPY .env .env
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install poetry && poetry install --no-root
 
 COPY wxtrans ./wxtrans
