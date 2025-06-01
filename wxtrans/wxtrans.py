@@ -202,7 +202,7 @@ def run_whisperx(audio_path: Path, threads: int) -> dict:
 def fix_missing_speakers(transcription_result: dict) -> dict:
     for i, segment in enumerate(transcription_result["segments"]):
         if "speaker" not in segment:
-            transcription_result["segments"][i] = "UNKNOWN"
+            transcription_result["segments"][i]["speaker"] = "UNKNOWN"
 
     return transcription_result
 
