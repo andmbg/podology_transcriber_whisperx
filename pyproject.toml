@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "kf-wxtrans"
+name = "podology-transcriber"
 version = "0.1.0"
 description = ""
 authors = ["Andreas Domberg <andom@posteo.de>"]
