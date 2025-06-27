@@ -1,4 +1,5 @@
 import os
+import shelve
 import sys
 import json
 import time
@@ -6,11 +7,12 @@ import uuid
 import secrets
 import subprocess
 from pathlib import Path
+import sqlite3
 
 import uvicorn
 from loguru import logger
 from dotenv import load_dotenv, find_dotenv
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi import (
     FastAPI,
     File,
@@ -20,7 +22,7 @@ from fastapi import (
     Request,
     Depends,
 )
-from wxtrans.assets import dummy_result
+from podology_transcriber.assets import dummy_result
 
 logger.remove()
 logger.add(sys.stderr, level="DEBUG")
@@ -29,16 +31,48 @@ load_dotenv(find_dotenv())
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 API_TOKEN = os.getenv("API_TOKEN")
+JOBS_DB_PATH = "jobs.db"
+
+
+def init_jobs_db():
+    with sqlite3.connect(JOBS_DB_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT,
+                path TEXT
+            )
+        """
+        )
+
 
 # Create the FastAPI app
 app = FastAPI()
+init_jobs_db()
 
 # Directory to store uploaded audio files temporarily
 UPLOAD_DIR = Path("/tmp/audio_files")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Store job statuses and results (for demo; use a DB or persistent store in production)
-JOBS = {}
+
+def set_job(job_id, status, path=None):
+    with sqlite3.connect(JOBS_DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO jobs (job_id, status, path) VALUES (?, ?, ?)",
+            (job_id, status, path),
+        )
+
+
+def get_job(job_id):
+    with sqlite3.connect(JOBS_DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT status, path FROM jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if row:
+            status, path = row
+            return {"status": status, "path": path}
+        return None
 
 
 def generate_job_id(length=8):
@@ -58,7 +92,7 @@ def check_api_token(request: Request):
 
 @app.post("/transcribe")
 async def transcribe(
-    file: UploadFile = File(...),
+    audiofile: UploadFile = File(...),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     _: None = Depends(check_api_token),
@@ -67,30 +101,38 @@ async def transcribe(
     Endpoint to handle audio file uploads and transcribe them using WhisperX.
     """
     # Save the uploaded file to the temporary directory
-    jid = str(uuid.uuid4())  # Generate a unique ID for the file
-    file_path = UPLOAD_DIR / f"{jid}_{file.filename}"
+    jid = generate_job_id()  # Generate a unique ID for the file
+    logger.debug(f"{jid}: Received a transcription request")
 
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    audio_path = UPLOAD_DIR / f"{jid}_{audiofile.filename}"
+    set_job(jid, "processing")
 
-    JOBS[jid] = {"status": "processing", "result": None}
-    background_tasks.add_task(process_transcription, job_id=jid, file_path=file_path)
+    with open(audio_path, "wb") as f:
+        f.write(await audiofile.read())
+
+    background_tasks.add_task(process_transcription, job_id=jid, audio_path=audio_path)
     return {"job_id": jid}
 
 
-def process_transcription(job_id, file_path, threads: int = 8):
+def process_transcription(job_id, audio_path, threads: int = 8):
+    transcript_path = audio_path.with_suffix(".json")
+
     try:
-        result = run_whisperx(file_path, threads=threads)
-        JOBS[job_id] = {"status": "done", "result": result}
+        result = run_whisperx(audio_path, threads=threads)
+        with open(transcript_path, "w") as f:
+            json.dump(result, f, indent=2)
+        set_job(job_id, "done", str(transcript_path))
+    
     except Exception as e:
-        JOBS[job_id] = {"status": "failed", "error": str(e)}
+        set_job(job_id, "failed", {"error": str(e)})
+    
     finally:
-        file_path.unlink(missing_ok=True)
+        audio_path.unlink(missing_ok=True)
 
 
 @app.post("/dummytranscribe")
 async def dummytranscribe(
-    file: UploadFile = File(...),
+    audiofile: UploadFile = File(...),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     _: None = Depends(check_api_token),
@@ -99,45 +141,60 @@ async def dummytranscribe(
     Endpoint to handle dummy transcription requests.
     """
     jid = generate_job_id()
-    JOBS[jid] = {"status": "processing", "result": None}
+    set_job(jid, "processing")
     logger.debug(f"{jid}: Received a dummy transcription request")
     background_tasks.add_task(process_dummy, job_id=jid)
+
     return {"job_id": jid}
 
 
 def process_dummy(job_id):
-    time.sleep(5)
+    logger.info(f"{job_id}: Processing dummy transcription")
+    transcript_path = UPLOAD_DIR / f"{job_id}_dummy.json"
+    time.sleep(10)
     logger.debug("Slept 10s")
-    JOBS[job_id] = {"status": "done", "result": dummy_result}
+
+    with open(transcript_path, "w") as f:
+        json.dump(dummy_result, f, indent=2)
+    set_job(job_id, "done", str(transcript_path))
 
 
-@app.get("/transcribe/status/{job_id}")
+@app.get("/status/{job_id}")
 def get_status(
     job_id: str,
     request: Request = None,
     _: None = Depends(check_api_token),
 ):
     logger.debug(f"Checking status for job {job_id}")
-    job = JOBS.get(job_id)
+    job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {"status": job["status"]}
+
+    status = job["status"]
+    response = {"status": status}
+    if status == "done":
+        base_url = str(request.base_url).rstrip("/")
+        response["download_url"] = f"{base_url}/download/{job_id}"
+
+    return JSONResponse(content=response)
 
 
-@app.get("/transcribe/result/{job_id}")
-def get_result(
+@app.get("/download/{job_id}")
+def download_transcript(
     job_id: str,
     request: Request = None,
     _: None = Depends(check_api_token),
 ):
-    job = JOBS.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if job["status"] != "done":
-        raise HTTPException(status_code=202, detail="Transcription not finished")
+    job = get_job(job_id)
+    if not job or job["status"] != "done":
+        raise HTTPException(status_code=404, detail="Job not found or not done")
 
-    logger.debug("Sending out transcription result")
-    return JSONResponse(content=job["result"])
+    transcript_path = job["path"]
+    if not transcript_path or not Path(transcript_path).exists():
+        raise HTTPException(status_code=404, detail="Transcript file not found")
+    return FileResponse(
+        transcript_path, media_type="application/json", filename=f"payload.json"
+    )
 
 
 def run_whisperx(audio_path: Path, threads: int) -> dict:
@@ -216,4 +273,4 @@ def root():
 
 
 if __name__ == "__main__":
-    uvicorn.run("wxtrans:app", host="0.0.0.0", port=8001)
+    uvicorn.run("server:app", host="0.0.0.0", port=8001, workers=1, log_level="debug")
