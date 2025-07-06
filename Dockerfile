@@ -1,5 +1,3 @@
-# filepath: podology_transcriber/Dockerfile
-#FROM python:3.12-slim
 FROM superlinear/python-gpu:3.12-cuda11.8
 
 WORKDIR /transcriber
@@ -15,7 +13,5 @@ RUN pip install poetry && poetry install --no-root
 
 COPY .env .env
 COPY podology_transcriber ./podology_transcriber
-
-#ENV PYTHONUNBUFFERED=1
 
 CMD ["poetry", "run", "uvicorn", "podology_transcriber.server:app", "--host", "0.0.0.0", "--port", "8001"]
