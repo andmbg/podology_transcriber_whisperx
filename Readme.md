@@ -14,10 +14,12 @@ Once cloned to the host system,
 
 ### 1. `.env`
 
+    cp .env.example .env
+
 This file is necessary for the API to run and it contains two values:
 
-    API_TOKEN=...
-    HF_TOKEN=...
+    API_TOKEN=
+    HF_TOKEN=
 
 The `API_TOKEN` can be anything, and you will paste it also in the main Podology `.env`. This is to limit access to the API to your own app.
 
