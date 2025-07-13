@@ -8,9 +8,9 @@ This is a simple FastAPI server that transcribes audio files and sends back a di
 
 Once cloned to the host system,
 
-1. create `.env`
-2. build docker image
-3. run
+1. set `.env` content,
+2. build docker image,
+3. run.
 
 ### 1. `.env`
 
@@ -21,7 +21,7 @@ This file is necessary for the API to run and it contains two values:
 
 The `API_TOKEN` can be anything, and you will paste it also in the main Podology `.env`. This is to limit access to the API to your own app.
 
-The `HF_TOKEN` is the one you got at huggingface.co.
+The `HF_TOKEN` is the one you got at huggingface.co, see above.
 
 ### 2. Build image
 
