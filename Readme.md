@@ -4,7 +4,7 @@ This is a simple FastAPI server that transcribes audio files and sends back a di
 
 ## Getting started
 
-> First, get an API token for [`pyannote/speaker-diarization`](https://huggingface.co/pyannote/speaker-diarization) at huggingface.co. It is necessary to use the diarization feature in the whisperX transcription model. Keep this token, see below for how to use it.
+> First, get an API token for [`pyannote/speaker-diarization`](https://huggingface.co/pyannote/speaker-diarization) at huggingface.co. This is necessary in order to use the diarization feature in the whisperX transcription model. Keep this token, see below for how to use it.
 
 Once cloned to the host system,
 
