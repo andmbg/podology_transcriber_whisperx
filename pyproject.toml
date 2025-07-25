@@ -14,8 +14,6 @@ python-multipart = "^0.0.20"
 loguru = "^0.7.3"
 
 
-[tool.poetry.group.dev.dependencies]
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
