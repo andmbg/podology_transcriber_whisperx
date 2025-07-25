@@ -11,7 +11,13 @@ build-essential \
 COPY pyproject.toml poetry.lock ./
 RUN pip install poetry && poetry install --no-root
 
-COPY .env .env
 COPY podology_transcriber ./podology_transcriber
+
+# Set default environment variables (can be overridden in vast.ai)
+ENV API_TOKEN=""
+ENV HF_TOKEN=""
+
+# Expose the port
+EXPOSE 8001
 
 CMD ["poetry", "run", "uvicorn", "podology_transcriber.server:app", "--host", "0.0.0.0", "--port", "8001"]
