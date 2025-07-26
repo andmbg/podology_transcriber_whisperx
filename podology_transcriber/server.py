@@ -126,10 +126,12 @@ def process_transcription(job_id, audio_path):
 
     try:
         result = run_whisperx(audio_path)
+        logger.debug(f"Writing transcription result to {transcript_path}")
+
         with open(transcript_path, "w") as f:
             json.dump(result, f, indent=2)
 
-        set_job(job_id, "done", str(transcript_path))
+        set_job(job_id, "done")
         logger.info(f"{job_id}: Transcription completed successfully")
 
     except Exception as e:
@@ -144,8 +146,6 @@ def process_transcription(job_id, audio_path):
         # Clean up audio file
         if audio_path.exists():
             audio_path.unlink(missing_ok=True)
-        if transcript_path.exists():
-            transcript_path.unlink(missing_ok=True)
         logger.debug(f"{job_id}: Cleaned up temporary files")
 
 
@@ -169,13 +169,13 @@ async def dummytranscribe(
 
 def process_dummy(job_id):
     logger.info(f"{job_id}: Processing dummy transcription")
-    transcript_path = UPLOAD_DIR / f"{job_id}_dummy.json"
+    transcript_path = UPLOAD_DIR / f"{job_id}.json"
     time.sleep(10)
     logger.debug("Slept 10s")
 
     with open(transcript_path, "w") as f:
         json.dump(dummy_result, f, indent=2)
-    set_job(job_id, "done", str(transcript_path))
+    set_job(job_id, "done")
 
 
 @app.get("/status/{job_id}")
@@ -192,9 +192,6 @@ def get_status(
 
     status = job["status"]
     response = {"status": status}
-    if status == "done":
-        base_url = str(request.base_url).rstrip("/")
-        response["download_url"] = f"{base_url}/download/{job_id}"
 
     return JSONResponse(content=response)
 
@@ -206,10 +203,15 @@ def download_transcript(
     _: None = Depends(check_api_token),
 ):
     job = get_job(job_id)
+    
     if not job or job["status"] != "done":
         raise HTTPException(status_code=404, detail="Job not found or not done")
 
-    transcript_path = job["path"]
+    logger.debug(f"Downloading transcript for job {job_id}, status: {job['status']}")
+
+    transcript_path = UPLOAD_DIR / f"{job_id}.json"
+    logger.debug(f"Transcript path: {transcript_path}")
+
     if not transcript_path or not Path(transcript_path).exists():
         raise HTTPException(status_code=404, detail="Transcript file not found")
     return FileResponse(
@@ -235,11 +237,11 @@ def run_whisperx(audio_path: Path) -> dict:
         "--output_format", "json",
         "--hf_token", HF_TOKEN,
         #"--batch_size", "4",
-        # "--compute_type", "int8",
+        "--compute_type", "int8",
         "--model", "large-v2",
         "--diarize",
         "--align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H",
-        # "--threads", "8",
+        "--threads", "8",
     ]
     # fmt: on
 
