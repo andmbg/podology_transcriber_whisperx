@@ -237,11 +237,11 @@ def run_whisperx(audio_path: Path) -> dict:
         "--output_format", "json",
         "--hf_token", HF_TOKEN,
         #"--batch_size", "4",
-        "--compute_type", "int8",
+        # "--compute_type", "int8",
         "--model", "large-v2",
         "--diarize",
         "--align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H",
-        "--threads", "8",
+        # "--threads", "8",
     ]
     # fmt: on
 
