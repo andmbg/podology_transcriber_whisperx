@@ -143,7 +143,6 @@ def process_transcription(job_id, audio_path):
 
         set_job(job_id, "done")
         job_logger.info("Transcription completed successfully")
-        raise Exception("This is a dummy exception to test error handling")  # For testing
 
     except Exception as e:
         job_logger.error(f"Transcription failed: {e}")
