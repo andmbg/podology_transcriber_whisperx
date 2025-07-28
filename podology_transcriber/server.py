@@ -5,6 +5,7 @@ import time
 import subprocess
 from pathlib import Path
 import sqlite3
+from contextlib import contextmanager
 
 import uvicorn
 from loguru import logger
@@ -126,39 +127,54 @@ async def transcribe(
     return {"job_id": job_id, "status": "processing"}
 
 
-def process_transcription(job_id, audio_path):
-    # Setup job-specific logging
-    log_file = setup_job_logger(job_id)
-    job_logger = get_job_logger(job_id)
+@contextmanager
+def job_logging(job_id: str):
+    """Context manager for job-specific logging"""
+    log_file = LOGS_DIR / f"{job_id}.log"
 
-    transcript_path = audio_path.with_suffix(".json")
+    # Add job-specific file handler
+    handler_id = logger.add(
+        str(log_file),
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+        level="DEBUG",
+    )
 
     try:
-        job_logger.info(f"Starting transcription for {audio_path}")
-        result = run_whisperx(audio_path, job_logger)  # Pass job_logger
-
-        job_logger.debug(f"Writing transcription result to {transcript_path}")
-        with open(transcript_path, "w") as f:
-            json.dump(result, f, indent=2)
-
-        set_job(job_id, "done")
-        job_logger.info("Transcription completed successfully")
-
-    except Exception as e:
-        job_logger.error(f"Transcription failed: {e}")
-        job_logger.exception("Full exception details:")  # This includes stack trace
-
-        set_job(job_id, "failed", error_message=str(e))
-
-        # Clean up failed transcript file
-        if transcript_path.exists():
-            transcript_path.unlink()
-
+        yield log_file
     finally:
-        # Clean up audio file
-        if audio_path.exists():
-            audio_path.unlink(missing_ok=True)
-        job_logger.debug("Cleaned up temporary files")
+        logger.remove(handler_id)
+
+
+def process_transcription(job_id, audio_path):
+    transcript_path = audio_path.with_suffix(".json")
+
+    with job_logging(job_id) as log_file:
+        try:
+            logger.info(f"Job {job_id}: Starting transcription for {audio_path}")
+            result = run_whisperx(audio_path)
+
+            logger.debug(f"Job {job_id}: Writing transcription result to {transcript_path}")
+            with open(transcript_path, "w") as f:
+                json.dump(result, f, indent=2)
+
+            set_job(job_id, "done", path=str(transcript_path))
+            logger.info(f"Job {job_id}: Transcription completed successfully")
+
+            raise RuntimeError("This is a dummy exception to test error handling")  # For testing --- IGNORE ---
+
+        except Exception as e:
+            logger.error(f"Job {job_id}: Transcription failed: {e}")
+            logger.exception(f"Job {job_id}: Full exception details:")
+
+            set_job(job_id, "failed", error_message=str(e))
+
+            if transcript_path.exists():
+                transcript_path.unlink()
+
+        finally:
+            if audio_path.exists():
+                audio_path.unlink(missing_ok=True)
+            logger.debug(f"Job {job_id}: Cleaned up temporary files")
 
 
 @app.post("/dummytranscribe")
@@ -358,36 +374,3 @@ def root():
     Root endpoint to verify the server is running.
     """
     return {"message": "WhisperX transcription server is running"}
-
-
-def setup_job_logger(job_id: str):
-    """Setup a job-specific logger that writes to both stdout and a job-specific file"""
-    log_file = LOGS_DIR / f"{job_id}.log"
-
-    # Add job-specific file handler
-    logger.add(
-        str(log_file),
-        filter=lambda record: record["extra"].get("job_id") == job_id,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
-        level="DEBUG",
-        retention="7 days",  # Auto-cleanup old logs
-        compression="gz",  # Compress old logs
-    )
-
-    return log_file
-
-
-def get_job_logger(job_id: str):
-    """Get a logger bound to a specific job_id"""
-    return logger.bind(job_id=job_id)
-
-
-def cleanup_job_logger(job_id: str):
-    """Remove job-specific handlers (optional cleanup)"""
-    # Loguru handles this automatically with retention, but you can force cleanup
-    log_file = LOGS_DIR / f"{job_id}.log"
-    return log_file
-
-
-if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8001, workers=1, log_level="debug")
