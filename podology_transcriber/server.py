@@ -305,7 +305,7 @@ def run_whisperx(audio_path: Path) -> dict:
     # Construct the WhisperX command
     # fmt: off
     command = [
-        "whisperx", str(audio_path),
+        sys.executable, "-m", "whisperx",  str(audio_path),
         "--output_dir", str(output_dir),
         "--output_format", "json",
         "--hf_token", HF_TOKEN,
@@ -323,35 +323,27 @@ def run_whisperx(audio_path: Path) -> dict:
         logger.info(f"Running WhisperX command: {' '.join(command)}")
 
         # Use Popen for real-time output capture
-        process = subprocess.Popen(
+        result = subprocess.run(
             command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            capture_output=True,
             text=True,
-            bufsize=1,
-            universal_newlines=True,
+            check=True,
+            timeout=3600  # 1 hour timeout
         )
 
-        # Stream output to logger in real-time
-        while True:
-            output = process.stdout.readline()
-            if output == "" and process.poll() is not None:
-                break
-            if output:
-                # Log WhisperX output
-                logger.info(f"WhisperX: {output.strip()}")
-
-        # Wait for completion and check return code
-        return_code = process.poll()
-        if return_code != 0:
-            logger.error(f"WhisperX process failed with return code {return_code}")
-            raise subprocess.CalledProcessError(return_code, command)
+        logger.debug(f"WhisperX stdout: {result.stdout}")
+        if result.stderr:
+            logger.warning(f"WhisperX stderr: {result.stderr}")
 
         logger.info("WhisperX process completed successfully")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"WhisperX failed with return code {e.returncode}")
-        raise RuntimeError(f"WhisperX transcription failed with return code {e.returncode}")
+        error_msg = f"WhisperX failed with return code {e.returncode}\n"
+        error_msg += f"Command: {' '.join(command)}\n"
+        error_msg += f"Stdout: {e.stdout}\n"
+        error_msg += f"Stderr: {e.stderr}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
     except Exception as e:
         logger.error(f"Unexpected error running WhisperX: {e}")
         raise RuntimeError(f"Unexpected error running WhisperX: {str(e)}")
