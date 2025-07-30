@@ -80,7 +80,8 @@ def get_job(job_id):
     try:
         with sqlite3.connect(JOBS_DB_PATH) as conn:
             row = conn.execute(
-                "SELECT status, path, error_message FROM jobs WHERE job_id = ?", (job_id,)
+                "SELECT status, path, error_message FROM jobs WHERE job_id = ?",
+                (job_id,),
             ).fetchone()
             if row:
                 status, path, error_message = row
@@ -165,11 +166,8 @@ def process_transcription(job_id, audio_path):
         with open(transcript_path, "w") as f:
             json.dump(result, f, indent=2)
 
-        # DEBUG
-        set_job(job_id, "failed", error_message="+++ Simulated failure for testing purposes +++")
-        logger.error(f"Job {job_id}: +++ Simulated failure for testing purposes +++")
-        # set_job(job_id, "done", path=str(transcript_path))
-        # logger.info(f"Job {job_id}: Transcription completed successfully")
+        set_job(job_id, "done", path=str(transcript_path))
+        logger.info(f"Job {job_id}: Transcription completed successfully")
 
     except Exception as e:
         logger.error(f"Job {job_id}: Transcription failed: {e}")
@@ -178,7 +176,7 @@ def process_transcription(job_id, audio_path):
         # Capture the full traceback for the error message
         full_traceback = traceback.format_exc()
         error_message = f"Exception: {str(e)}\n\nFull traceback:\n{full_traceback}"
-        
+
         set_job(job_id, "failed", error_message=error_message)
 
         if transcript_path.exists():
@@ -305,7 +303,7 @@ def run_whisperx(audio_path: Path) -> dict:
     # Construct the WhisperX command
     # fmt: off
     command = [
-        sys.executable, "-m", "whisperx",  str(audio_path),
+        sys.executable, "-m", "whisperx", str(audio_path),
         "--output_dir", str(output_dir),
         "--output_format", "json",
         "--hf_token", HF_TOKEN,
@@ -328,7 +326,7 @@ def run_whisperx(audio_path: Path) -> dict:
             capture_output=True,
             text=True,
             check=True,
-            timeout=3600  # 1 hour timeout
+            timeout=3600,  # 1 hour timeout
         )
 
         logger.debug(f"WhisperX stdout: {result.stdout}")
