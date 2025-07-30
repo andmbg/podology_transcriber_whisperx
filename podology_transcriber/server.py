@@ -28,8 +28,16 @@ from podology_transcriber.assets import dummy_result
 LOGS_DIR = Path("./logs")
 LOGS_DIR.mkdir(exist_ok=True)
 
-# logger.remove()
-# logger.add(sys.stderr, level="DEBUG")
+# Setup global logging with both console and file output
+logger.remove()  # Remove default handler
+logger.add(sys.stderr, level="DEBUG")  # Console logging
+logger.add(
+    LOGS_DIR / "transcriber.log",
+    rotation="10 MB",
+    retention="7 days",
+    level="DEBUG",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+)
 
 load_dotenv(find_dotenv())
 
@@ -148,33 +156,30 @@ def job_logging(job_id: str):
 def process_transcription(job_id, audio_path):
     transcript_path = audio_path.with_suffix(".json")
 
-    with job_logging(job_id) as log_file:
-        try:
-            logger.info(f"Job {job_id}: Starting transcription for {audio_path}")
-            result = run_whisperx(audio_path)
+    try:
+        logger.info(f"Job {job_id}: Starting transcription for {audio_path}")
+        result = run_whisperx(audio_path)
 
-            logger.debug(f"Job {job_id}: Writing transcription result to {transcript_path}")
-            with open(transcript_path, "w") as f:
-                json.dump(result, f, indent=2)
+        logger.debug(f"Job {job_id}: Writing transcription result to {transcript_path}")
+        with open(transcript_path, "w") as f:
+            json.dump(result, f, indent=2)
 
-            set_job(job_id, "done", path=str(transcript_path))
-            logger.info(f"Job {job_id}: Transcription completed successfully")
+        set_job(job_id, "done", path=str(transcript_path))
+        logger.info(f"Job {job_id}: Transcription completed successfully")
 
-            raise RuntimeError("This is a dummy exception to test error handling")  # For testing --- IGNORE ---
+    except Exception as e:
+        logger.error(f"Job {job_id}: Transcription failed: {e}")
+        logger.exception(f"Job {job_id}: Full exception details:")
 
-        except Exception as e:
-            logger.error(f"Job {job_id}: Transcription failed: {e}")
-            logger.exception(f"Job {job_id}: Full exception details:")
+        set_job(job_id, "failed", error_message=str(e))
 
-            set_job(job_id, "failed", error_message=str(e))
+        if transcript_path.exists():
+            transcript_path.unlink()
 
-            if transcript_path.exists():
-                transcript_path.unlink()
-
-        finally:
-            if audio_path.exists():
-                audio_path.unlink(missing_ok=True)
-            logger.debug(f"Job {job_id}: Cleaned up temporary files")
+    finally:
+        if audio_path.exists():
+            audio_path.unlink(missing_ok=True)
+        logger.debug(f"Job {job_id}: Cleaned up temporary files")
 
 
 @app.post("/dummytranscribe")
@@ -224,12 +229,25 @@ def get_status(
 
     # Always include logs for failed jobs, optionally for others
     if status == "failed" or include_logs:
-        log_file = LOGS_DIR / f"{job_id}.log"
+        # Read from the global log file and filter for this job
+        log_file = LOGS_DIR / "transcriber.log"
         if log_file.exists():
             try:
                 with open(log_file, "r") as f:
-                    response["logs"] = f.read()
-                logger.debug(f"Included log file for job {job_id}")
+                    all_logs = f.read()
+
+                # Filter logs for this specific job
+                job_logs = []
+                for line in all_logs.split("\n"):
+                    if f"Job {job_id}:" in line:
+                        job_logs.append(line)
+
+                if job_logs:
+                    response["logs"] = "\n".join(job_logs)
+                else:
+                    response["logs"] = f"No logs found for job {job_id}"
+
+                logger.debug(f"Included filtered logs for job {job_id}")
             except Exception as e:
                 logger.error(f"Failed to read log file for job {job_id}: {e}")
                 response["logs"] = f"Error reading log file: {e}"
@@ -266,11 +284,11 @@ def download_transcript(
     )
 
 
-def run_whisperx(audio_path: Path, job_logger) -> dict:
+def run_whisperx(audio_path: Path) -> dict:
     """
-    Run WhisperX with job-specific logging
+    Run WhisperX with logging
     """
-    job_logger.debug(f"Running WhisperX on {audio_path}")
+    logger.debug(f"Running WhisperX on {audio_path}")
 
     # Define the output directory for WhisperX
     output_dir = audio_path.parent
@@ -294,61 +312,61 @@ def run_whisperx(audio_path: Path, job_logger) -> dict:
 
     # Run the command
     try:
-        job_logger.info(f"Running WhisperX command: {' '.join(command)}")
+        logger.info(f"Running WhisperX command: {' '.join(command)}")
 
         # Use Popen for real-time output capture
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr into stdout
+            stderr=subprocess.STDOUT,
             text=True,
-            bufsize=1,  # Line buffered
+            bufsize=1,
             universal_newlines=True,
         )
 
-        # Stream output to job logger in real-time
+        # Stream output to logger in real-time
         while True:
             output = process.stdout.readline()
             if output == "" and process.poll() is not None:
                 break
             if output:
-                # Log WhisperX output with special prefix
-                job_logger.info(f"WhisperX: {output.strip()}")
+                # Log WhisperX output
+                logger.info(f"WhisperX: {output.strip()}")
 
         # Wait for completion and check return code
         return_code = process.poll()
         if return_code != 0:
+            logger.error(f"WhisperX process failed with return code {return_code}")
             raise subprocess.CalledProcessError(return_code, command)
 
-        job_logger.info("WhisperX process completed successfully")
+        logger.info("WhisperX process completed successfully")
 
     except subprocess.CalledProcessError as e:
-        job_logger.error(f"WhisperX failed with return code {e.returncode}")
-        raise RuntimeError(f"WhisperX transcription failed")
+        logger.error(f"WhisperX failed with return code {e.returncode}")
+        raise RuntimeError(f"WhisperX transcription failed with return code {e.returncode}")
     except Exception as e:
-        job_logger.error(f"Unexpected error running WhisperX: {e}")
-        raise
+        logger.error(f"Unexpected error running WhisperX: {e}")
+        raise RuntimeError(f"Unexpected error running WhisperX: {str(e)}")
 
     # Locate the JSON output file
     json_file = output_dir / f"{audio_path.stem}.json"
     if not json_file.exists():
-        job_logger.error(f"JSON output file not found: {json_file}")
-        # List directory contents for debugging
+        logger.error(f"JSON output file not found: {json_file}")
         files_in_dir = list(output_dir.glob("*"))
-        job_logger.debug(f"Files in output directory: {files_in_dir}")
+        logger.debug(f"Files in output directory: {files_in_dir}")
         raise RuntimeError(f"JSON output file {json_file} not found")
 
-    job_logger.debug(f"WhisperX output JSON file: {json_file}")
+    logger.debug(f"WhisperX output JSON file: {json_file}")
 
     # Read and parse the JSON file
     try:
         with open(json_file, "r") as f:
             transcription_result = json.load(f)
-        job_logger.debug(
+        logger.debug(
             f"Successfully parsed JSON with {len(transcription_result.get('segments', []))} segments"
         )
     except Exception as e:
-        job_logger.error(f"Failed to parse WhisperX output JSON file: {str(e)}")
+        logger.error(f"Failed to parse WhisperX output JSON file: {str(e)}")
         raise RuntimeError(f"Failed to parse WhisperX output JSON file: {str(e)}")
 
     # Clean up the result
@@ -356,7 +374,7 @@ def run_whisperx(audio_path: Path, job_logger) -> dict:
     if "word_segments" in transcription_result:
         del transcription_result["word_segments"]
 
-    job_logger.info("WhisperX transcription processing completed")
+    logger.info("WhisperX transcription processing completed")
     return transcription_result
 
 
