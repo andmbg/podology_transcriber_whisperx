@@ -164,8 +164,11 @@ def process_transcription(job_id, audio_path):
         with open(transcript_path, "w") as f:
             json.dump(result, f, indent=2)
 
-        set_job(job_id, "done", path=str(transcript_path))
-        logger.info(f"Job {job_id}: Transcription completed successfully")
+        # DEBUG
+        set_job(job_id, "failed", error_message="+++ Simulated failure for testing purposes +++")
+        logger.error(f"Job {job_id}: +++ Simulated failure for testing purposes +++")
+        # set_job(job_id, "done", path=str(transcript_path))
+        # logger.info(f"Job {job_id}: Transcription completed successfully")
 
     except Exception as e:
         logger.error(f"Job {job_id}: Transcription failed: {e}")
@@ -214,7 +217,7 @@ def process_dummy(job_id):
 @app.get("/status/{job_id}")
 def get_status(
     job_id: str,
-    include_logs: bool = True,
+    include_logs: bool = False,
     request: Request = None,
     _: None = Depends(check_api_token),
 ):
