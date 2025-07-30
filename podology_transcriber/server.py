@@ -308,11 +308,11 @@ def run_whisperx(audio_path: Path) -> dict:
         "--output_format", "json",
         "--hf_token", HF_TOKEN,
         #"--batch_size", "4",
-        # "--compute_type", "int8",
+        "--compute_type", "int8",
         "--model", "large-v2",
         "--diarize",
         "--align_model", "WAV2VEC2_ASR_LARGE_LV60K_960H",
-        # "--threads", "8",
+        "--threads", "8",
     ]
     # fmt: on
 
@@ -326,7 +326,7 @@ def run_whisperx(audio_path: Path) -> dict:
             capture_output=True,
             text=True,
             check=True,
-            timeout=3600,  # 1 hour timeout
+            timeout=36000,  # 10 hour timeout for cpu model
         )
 
         logger.debug(f"WhisperX stdout: {result.stdout}")
