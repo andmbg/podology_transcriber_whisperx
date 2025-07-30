@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 import sqlite3
 from contextlib import contextmanager
+import traceback  # Add this import at the top
 
 import uvicorn
 from loguru import logger
@@ -174,7 +175,11 @@ def process_transcription(job_id, audio_path):
         logger.error(f"Job {job_id}: Transcription failed: {e}")
         logger.exception(f"Job {job_id}: Full exception details:")
 
-        set_job(job_id, "failed", error_message=str(e))
+        # Capture the full traceback for the error message
+        full_traceback = traceback.format_exc()
+        error_message = f"Exception: {str(e)}\n\nFull traceback:\n{full_traceback}"
+        
+        set_job(job_id, "failed", error_message=error_message)
 
         if transcript_path.exists():
             transcript_path.unlink()
