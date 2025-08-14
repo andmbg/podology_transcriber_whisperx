@@ -116,19 +116,34 @@ async def transcribe(
     """
     Endpoint to handle audio file uploads and transcribe them using WhisperX.
     """
-    if not job_id:
-        return HTTPException(
-            status_code=400, detail="Job ID must be provided in the request"
-        )
-    logger.info(f"{job_id}: Received a transcription request")
+    logger.info(
+        f"Receiving upload for job {job_id}: {audiofile.filename} ({audiofile.size} bytes)"
+    )
+    start_time = time.time()
 
     # Save the uploaded file to the temporary directory
 
     audio_path = UPLOAD_DIR / f"{audiofile.filename}"
-    set_job(job_id, "processing")
 
-    with open(audio_path, "wb") as f:
-        f.write(await audiofile.read())
+    try:
+        # Read the file content
+        content = await audiofile.read()
+
+        # Write to disk
+        with open(audio_path, "wb") as buffer:
+            buffer.write(content)
+
+        upload_time = time.time() - start_time
+        file_size_mb = audio_path.stat().st_size / (1024 * 1024)
+        logger.info(f"Upload completed: {file_size_mb:.2f} MB in {upload_time:.2f} s")
+
+    except Exception as e:
+        logger.error(f"Failed to save uploaded file: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to save uploaded file: {e}"
+        )
+
+    set_job(job_id, "processing")
 
     background_tasks.add_task(
         process_transcription, job_id=job_id, audio_path=audio_path
@@ -307,7 +322,7 @@ def run_whisperx(audio_path: Path) -> dict:
         "--output_dir", str(output_dir),
         "--output_format", "json",
         "--hf_token", HF_TOKEN,
-        #"--batch_size", "4",
+        # "--batch_size", "4",
         # "--compute_type", "int8",
         "--model", "large-v2",
         "--diarize",
