@@ -63,8 +63,29 @@ def init_jobs_db():
         )
 
 
-# Create the FastAPI app
-app = FastAPI()
+# Create the FastAPI app with increased limits for audio file uploads
+app = FastAPI(
+    title="WhisperX Transcription Server",
+    description="GPU-accelerated audio transcription service",
+    version="1.0.0"
+)
+
+# Configure file upload limits
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Increase the max request size for large audio files (100MB)
+import uvicorn.protocols.http.httptools_impl
+uvicorn.protocols.http.httptools_impl.HttpToolsProtocol.max_request_size = 100 * 1024 * 1024
+
 init_jobs_db()
 
 
@@ -117,21 +138,30 @@ async def transcribe(
     Endpoint to handle audio file uploads and transcribe them using WhisperX.
     """
     logger.info(
-        f"Receiving upload for job {job_id}: {audiofile.filename} ({audiofile.size} bytes)"
+        f"Receiving upload for job {job_id}: {audiofile.filename} ({audiofile.size if audiofile.size else 'unknown'} bytes)"
     )
     start_time = time.time()
 
-    # Save the uploaded file to the temporary directory
+    # Check file size limit (100MB)
+    MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+    if audiofile.size and audiofile.size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413, 
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024*1024):.0f}MB"
+        )
 
+    # Save the uploaded file to the temporary directory
     audio_path = UPLOAD_DIR / f"{audiofile.filename}"
 
     try:
-        # Read the file content
-        content = await audiofile.read()
-
-        # Write to disk
+        # Read the file content in chunks to avoid memory issues
+        chunk_size = 8192  # 8KB chunks
         with open(audio_path, "wb") as buffer:
-            buffer.write(content)
+            while True:
+                chunk = await audiofile.read(chunk_size)
+                if not chunk:
+                    break
+                buffer.write(chunk)
 
         upload_time = time.time() - start_time
         file_size_mb = audio_path.stat().st_size / (1024 * 1024)
@@ -139,6 +169,9 @@ async def transcribe(
 
     except Exception as e:
         logger.error(f"Failed to save uploaded file: {e}")
+        # Clean up partial file
+        if audio_path.exists():
+            audio_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=500, detail=f"Failed to save uploaded file: {e}"
         )
@@ -404,4 +437,17 @@ def root():
     """
     Root endpoint to verify the server is running.
     """
-    return {"message": "WhisperX transcription server is running"}
+    return {
+        "message": "WhisperX transcription server is running",
+        "max_file_size_mb": 100,
+        "supported_formats": ["mp3", "wav", "m4a", "flac", "ogg"],
+        "timeout_seconds": 3600
+    }
+
+
+@app.get("/health")
+def health_check():
+    """
+    Health check endpoint for container monitoring.
+    """
+    return {"status": "healthy", "timestamp": time.time()}
